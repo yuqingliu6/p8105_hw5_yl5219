@@ -44,23 +44,6 @@ homicide_data = read.csv("./homicide-data.csv")
 
 The dataset has `r ncol(homicide_data)` variables and `r nrow(homicide_data)` observations. It contains variables including `uid`, `reported_date`, `victim_last`, `victim_first`, `victim_race`, `victim_age`, `victim_sex`, `city`, `state`, `lat`, `lon`, `disposition`.
 
-
-```{r message=FALSE}
-homicide_data = read.csv("./homicide-data.csv")|>
-  mutate(city_state = paste(city, state, sep = ","),
-    resolution = case_when(
-      disposition == "Closed without arrest" ~ "unsolved",
-      disposition == "Open/No arrest"        ~ "unsolved",
-      disposition == "Closed by arrest"      ~ "solved"
-    ))|>
-  filter(city_state != "Tulsa, AL") |>
-  group_by(city_state, resolution)|>
-  summarise(n_obs = n())
-
-knitr::kable(homicide_data)
-```
-
-
 ```{r}
 homicide_df =  
   read_csv("./homicide-data.csv", na = c("", "NA", "Unknown")) %>%
