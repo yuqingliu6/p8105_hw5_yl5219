@@ -2,7 +2,7 @@
 title: "p8105_hw5_yl5219"
 author: "Yuqing Liu"
 date: "2023-11-13"
-output: html_document
+output: github_document
 ---
 
 ```{r setup, include=FALSE}
@@ -30,6 +30,7 @@ theme_set(theme_minimal() + theme(legend.position = "bottom"))
 ```
 
 ```{r}
+library(readr)
 library(tidyverse)
 library(dplyr)
 ```
@@ -61,8 +62,8 @@ knitr::kable(homicide_data)
 
 
 ```{r}
-homicide_df = 
-  read_csv("data/homicide-data.csv", na = c("", "NA", "Unknown")) %>%
+homicide_df =  
+  read_csv("./homicide-data.csv", na = c("", "NA", "Unknown")) %>%
   mutate(
     city_state = str_c(city, state, sep = ", "),
     resolution = case_when(
@@ -131,9 +132,186 @@ This figure suggests a very wide range in the rate at which homicides are solved
 
 ### Problem 2
 
+Import a dataframe containing all file names
+```{r}
+data = tibble(list.files("./data")) |>
+  mutate(file_list = paste(list.files("./data")))
+```
 
+Write a function to read multiple datasets:
+
+* Defined function named `read_files`.Takes a parameter x representing a file name. Reads a CSV file using `read_csv` from the `readr` package. Adds a new column named "file_names" to the data frame, storing the file name.
+
+* Applies the `read_files` function to each element in the "file_list" column of the `data` data frame using `map_df`. Combines the results into a single data frame named `arm_dataset`.
+
+```{r,message=FALSE}
+read_files = function(x) {
+  
+    data = read_csv(paste0("./data/", x))|>
+      mutate(file_names = x)
+}
+
+arm_dataset = map_df(data$file_list, read_files)
+
+arm_dataset
+```
+Tidy the dataset:
+* Applies the `clean_names` function from the `janitor` package to standardize column names.
+* Uses `gather` to reshape data from wide to long format, creating columns "week" and "arm_value."
+* Utilizes `mutate` to remove "week_" prefix from the "week" column.
+* Extracts subject IDs from file names and converts them to integers.
+* Categorizes file names as "Control" or "Experiment" based on pattern matching.
+* Converts specified columns to factors using `mutate(across(..., as.factor))`.
+* Reorders columns for better readability.
+```{r}
+clean_arm_dataset =
+  arm_dataset |>
+  janitor::clean_names() |>
+  gather(key = week, value = arm_value, week_1:week_8) |>
+  mutate(week = str_remove(week, "week_")) |>
+  mutate(subject_ID = as.integer(str_extract(file_names, "[0-9][0-9]"))) |>
+  mutate(file_names = ifelse(str_detect(file_names, "con") == TRUE,
+                             "Control", "Experiment")) |>
+  mutate(across(.cols = c(file_names, week, subject_ID), as.factor)) |>
+  relocate(file_names, subject_ID, arm_value)
+
+clean_arm_dataset
+```
+
+draw spaghetti plot showing observations on each subject over time:
+
+* Creates a scatter plot (`geom_point`) with a line plot (`geom_line`) overlay for each subject over 8 weeks.
+* Colors points based on subject ID and adds transparency to lines.
+* Facets the plot by file names ("Control" and "Experiment").
+
+```{r}
+clean_arm_dataset |>
+  ggplot(aes(week, arm_value, color=subject_ID)) + 
+  geom_point(size = 0.2) + 
+  geom_line(aes(group = subject_ID), alpha=0.5) +
+  facet_grid(~file_names) +
+  labs(x = "Week", y = "Arm Value", 
+       title = "Arm Values on Each Subject over 8 Weeks in Two Groups",
+       col = "Subject ID") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+```
+
+*Comment:*
+In the experimental group, participants generally exhibited a rise in arm measurements over the 8-week period, with variations in the timing and magnitude of these changes observed among individuals. Conversely, in the control group, arm measurements fluctuated over time without exhibiting a discernible pattern or significant shifts, in contrast to the trends observed in the experimental group. Noteworthy is the absence of individuals in the control group reaching arm measurements exceeding 5, whereas approximately half of the participants in the experimental group surpassed this threshold during the study.
 
 
 
 
 ### Problem 3
+
+Generate 5000 datasets from the model:
+$$x\sim Normal[\mu,\sigma]$$
+Simulation Setup:
+
+* Sets seed (123) for reproducibility.
+* Defines sample size (n), standard deviation (sigma), true mean values (mu_values), significance * level (alpha), and the number of simulations (num_simulations).
+
+Conducts Simulations:
+
+* Uses map_dfr to iterate over true mean values, conducting a t-test simulation for each.
+* For each simulation: Stores true mean (mu). Applies t-test to samples generated from a normal distribution with specified parameters. Extracts and stores estimates and p-values using the `broom` package. Determines if null hypothesis is rejected based on significance level.
+
+Output:
+
+Results are compiled into a data frame (`simulation_results`), with columns for true mean, simulation details, estimates, p-values, and null hypothesis rejection indicators.
+
+```{r}
+set.seed(123) # For reproducibility
+n = 30 # Sample size
+sigma = 5 # Standard deviation
+mu_values = 0:6 # True mean values
+alpha = 0.05 # Significance level
+num_simulations = 5000 # Number of simulations
+
+simulation_results = map_dfr(mu_values, function(mu) {
+  tibble(
+    mu = mu,
+    simulation = map(1:num_simulations, ~ t.test(rnorm(n, mu, sigma))),
+    estimate = map_dbl(simulation, ~ broom::tidy(.x)$estimate),
+    p_value = map_dbl(simulation, ~ broom::tidy(.x)$p.value),
+    reject_null = p_value < alpha
+  )
+})
+```
+
+Plot: Proportion of times the null is rejected (power of the test)
+
+Power Analysis:
+
+* Utilizes the `simulation_results` data to calculate power-related statistics grouped by true mean values (`mu`).
+* Computes mean power, average estimated true mean (`avg_mu_hat`), and average estimated true mean when null hypothesis is rejected (`avg_mu_hat_rejected`).
+```{r}
+# create a dataset for power_results
+power_results <- simulation_results |>
+  group_by(mu) |>
+  summarise(power = mean(reject_null), 
+            avg_mu_hat = mean(estimate), 
+            avg_mu_hat_rejected = mean(estimate[reject_null]))
+```
+
+Plotting:
+
+* Uses `ggplot` to create a scatter plot with a line overlay.
+* X-axis represents true mean values (`mu`), and Y-axis represents power.
+* Adds points and lines to visualize the relationship between true mean and power.
+* Customizes plot title, x-axis label, and y-axis label using `labs`.
+
+```{r}
+#plotting
+power_plot = power_results |>
+  ggplot(aes(x = mu, y = power)) +
+  geom_point() +
+  geom_line() +
+  labs(title = "Power vs. True Mean", x = "True Mean (mu)", y = "Power")
+
+power_plot
+```
+A positive correlation exists between effect size and power, but with diminishing returns as the effect size reaches larger magnitudes. As the true mean deviates farther from 0, the test's power proportionally escalates. Notably, the power experiences a swift ascent as the true mean shifts from 0 to 2, indicating a steep curve. However, the rate of power increase decelerates as the true mean surpasses a certain threshold, approximately 4 and beyond. This pattern aligns with statistical theory: larger effect sizes facilitate the detection of true effects, thereby enhancing the test's power.
+
+
+
+
+Plot: Average estimate of the true mean:
+* Uses `power_results` data to create a plot comparing average estimated means to true mean values.
+* Generates a scatter plot with lines for two types of average estimates: "Average Estimate" and "Conditional Average Estimate."
+* X-axis represents true mean values (`mu`).
+* Two sets of points and lines represent different average estimates.
+* Customizes plot title, x-axis label, y-axis label, and color legend using `labs`.
+* Manually sets color values for clarity using `scale_color_manual`.
+* Applies a minimal theme and positions the legend at the bottom.
+
+
+```{r}
+estimate_plot <- power_results |>
+  ggplot(aes(x = mu)) +
+  geom_point(aes(y = avg_mu_hat, color = "Average Estimate"), shape = 1) +  
+  geom_line(aes(y = avg_mu_hat, color = "Average Estimate")) +
+  geom_point(aes(y = avg_mu_hat_rejected, color = "Conditional Average Estimate"), shape = 2) +
+  geom_line(aes(y = avg_mu_hat_rejected, color = "Conditional Average Estimate"), linetype = "dashed") +
+  labs(
+    title = "Average Estimated Mean vs. True Mean",
+    x = "True Mean (mu)",
+    y = "Average Estimated Mean",
+    color = "mu_hat"
+  ) +
+  scale_color_manual(
+    values = c("Average Estimate" = "blue", "Conditional Average Estimate" = "red")
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+estimate_plot
+
+```
+
+The average of sample estimates across tests where the null hypothesis is rejected tends to deviate from the actual true mean, especially for smaller true mean values. This discrepancy arises because null hypothesis rejection is influenced by the magnitude of the estimates, leading to an overestimation of the true mean when the null is rejected. As the true mean increases, the conditional estimates converge towards a scenario where the observed estimates align more closely with the true mean. Larger true means are more easily detectable and exhibit less sensitivity to the extremes of sampling variability.
+
+
+
+
+
